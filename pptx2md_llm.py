@@ -14,9 +14,10 @@ pptx2md_llm.py – 将 PPTX 转换为 LLM 友好的 Markdown 格式
 import argparse
 import os
 import sys
+from collections import Counter
 from pathlib import Path
 from pptx import Presentation
-from pptx.util import Emu
+from pptx.util import Emu, Pt
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 
 
@@ -52,6 +53,22 @@ def is_title_shape(shape):
 
 
 # ──────────────────── 文本提取 ────────────────────
+
+def get_font_size_pt(shape):
+    """
+    获取文本框中主要字号 (pt)。
+    取所有 run 中出现次数最多的字号；如果都没有显式字号则返回 None。
+    """
+    sizes = []
+    for para in shape.text_frame.paragraphs:
+        for run in para.runs:
+            if run.font and run.font.size:
+                sizes.append(round(run.font.size / Pt(1)))
+    if not sizes:
+        return None
+    # 返回众数
+    return Counter(sizes).most_common(1)[0][0]
+
 
 def extract_paragraph_text(paragraph):
     """
@@ -91,10 +108,14 @@ def extract_paragraph_text(paragraph):
 
 
 def format_text_block(shape, include_position=True):
-    """将文本框的内容转为 Markdown 文本"""
+    """将文本框的内容转为 Markdown 文本，附带字号信息"""
     lines = []
     if include_position:
         lines.append(position_tag(shape))
+    # 字号标记
+    font_size = get_font_size_pt(shape)
+    if font_size:
+        lines.append(f"[字号:{font_size}pt]")
     for para in shape.text_frame.paragraphs:
         text, level, is_bullet = extract_paragraph_text(para)
         if not text:
@@ -194,14 +215,20 @@ def ungroup_shapes(shapes):
 
 # ──────────────────── 单页处理 ────────────────────
 
-# 短文本判定阈值：纯文本字数 <= 此值 且 无列表标记 的文本框视为"标签"
+# 短文本判定阈值：纯文本字数 <= 此值 且 无列表标记 且 字号不大 的文本框视为"标签"
 LABEL_MAX_CHARS = 15
+# 字号 >= 此值的文本框即使很短也视为正文（大标题）
+LARGE_FONT_THRESHOLD = 20
 
 
 def _is_label_shape(shape):
     """判断文本框是否只是图表里的小标签"""
     text = shape.text_frame.text.strip().replace("\n", "")
     if len(text) > LABEL_MAX_CHARS:
+        return False
+    # 大字号 → 不是标签
+    font_size = get_font_size_pt(shape)
+    if font_size and font_size >= LARGE_FONT_THRESHOLD:
         return False
     # 如果含有列表项 / 多段有层级，视为正文
     for para in shape.text_frame.paragraphs:
@@ -223,7 +250,7 @@ def process_slide(slide, slide_idx, image_dir=None, include_position=True):
     labels = []  # 收集短标签，最后聚合输出
 
     for shape in shapes_sorted:
-        # ── 标题 ──
+        # ── 标题占位符 ──
         if is_title_shape(shape):
             title_text = shape.text_frame.text.strip() if shape.has_text_frame else ""
             if title_text:
@@ -237,29 +264,20 @@ def process_slide(slide, slide_idx, image_dir=None, include_position=True):
                 content_blocks.append(md)
             continue
 
-        # ── 图片和形状：跳过 ──
-        if shape.shape_type in (MSO_SHAPE_TYPE.PICTURE,
-                                MSO_SHAPE_TYPE.AUTO_SHAPE,
-                                MSO_SHAPE_TYPE.FREEFORM,
-                                MSO_SHAPE_TYPE.LINE):
-            continue
-
-        # ── 文本框 ──
+        # ── 含文本的任何 shape（文本框、AUTO_SHAPE等）优先提取文本 ──
         if shape.has_text_frame:
             text = shape.text_frame.text.strip()
-            if not text:
-                continue
-            # 短文本 → 归入标签
-            if _is_label_shape(shape):
-                label = text.replace("\n", " ")
-                labels.append(label)
-            else:
-                md = format_text_block(shape, include_position)
-                if md.strip():
-                    content_blocks.append(md)
+            if text:
+                if _is_label_shape(shape):
+                    label = text.replace("\n", " ")
+                    labels.append(label)
+                else:
+                    md = format_text_block(shape, include_position)
+                    if md.strip():
+                        content_blocks.append(md)
             continue
 
-        # 其他类型直接跳过
+        # ── 纯图片/纯形状/连接线等无文本 shape：跳过 ──
 
     # 组装本页 Markdown
     page_num = slide_idx + 1
