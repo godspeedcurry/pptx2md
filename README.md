@@ -64,14 +64,6 @@ AI融合Secure SD-WAN解决方案：LAN/WAN融合部署
 | 图片/形状/连接线 | 跳过（减少噪声） |
 | 演讲者备注 | → `> **备注:** ...` |
 
-## Python API
-
-```python
-from pptx2md_llm import pptx_to_markdown
-
-md = pptx_to_markdown("input.pptx")
-print(md)
-```
 
 ## License
 
