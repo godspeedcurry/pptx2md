@@ -285,7 +285,7 @@ def process_slide(slide, slide_idx, image_dir=None, include_position=True):
 
     # 提取备注
     notes_text = ""
-    if slide.has_notes_slide:
+    if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
         notes = slide.notes_slide.notes_text_frame.text.strip()
         if notes:
             notes_text = f"\n> **备注:** {notes}"
